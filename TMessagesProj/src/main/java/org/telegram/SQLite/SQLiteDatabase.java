@@ -1,32 +1,30 @@
 /*
- * This is the source code of Telegram for Android v. 1.3.2.
+ * This is the source code of Telegram for Android v. 5.x.x.
  * It is licensed under GNU GPL v. 2 or later.
  * You should have received a copy of the license in this archive (see LICENSE).
  *
- * Copyright Nikolai Kudashov, 2013.
+ * Copyright Nikolai Kudashov, 2013-2018.
  */
 
 package org.telegram.SQLite;
 
+import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
-import org.telegram.ui.ApplicationLoader;
-
-import java.util.HashMap;
-import java.util.Map;
+import org.telegram.messenger.ApplicationLoader;
 
 public class SQLiteDatabase {
-	private final int sqliteHandle;
 
-	private final Map<String, SQLitePreparedStatement> preparedMap = new HashMap<String, SQLitePreparedStatement>();
-	private boolean isOpen = false;
-    private boolean inTransaction = false;
+	private final long sqliteHandle;
 
-	public int getSQLiteHandle() {
+	private boolean isOpen;
+    private boolean inTransaction;
+
+	public long getSQLiteHandle() {
 		return sqliteHandle;
 	}
 
 	public SQLiteDatabase(String fileName) throws SQLiteException {
-		sqliteHandle = opendb(fileName, ApplicationLoader.applicationContext.getFilesDir().getPath());
+		sqliteHandle = opendb(fileName, ApplicationLoader.getFilesDirFixed().getPath());
 		isOpen = true;
 	}
 
@@ -36,23 +34,13 @@ public class SQLiteDatabase {
 		return executeInt(s, tableName) != null;
 	}
 
-	public void execute(String sql, Object... args) throws SQLiteException {
-		checkOpened();
-		SQLiteCursor cursor = query(sql, args);
-		try {
-			cursor.next();
-		} finally {
-			cursor.dispose();
-		}
-	}
-
     public SQLitePreparedStatement executeFast(String sql) throws SQLiteException {
         return new SQLitePreparedStatement(this, sql, true);
     }
 
 	public Integer executeInt(String sql, Object... args) throws SQLiteException {
 		checkOpened();
-		SQLiteCursor cursor = query(sql, args);
+		SQLiteCursor cursor = queryFinalized(sql, args);
 		try {
 			if (!cursor.next()) {
 				return null;
@@ -63,16 +51,18 @@ public class SQLiteDatabase {
 		}
 	}
 
-	public SQLiteCursor query(String sql, Object... args) throws SQLiteException {
+	public void explainQuery(String sql, Object... args) throws SQLiteException {
 		checkOpened();
-		SQLitePreparedStatement stmt = preparedMap.get(sql);
-
-		if (stmt == null) {
-			stmt = new SQLitePreparedStatement(this, sql, false);
-			preparedMap.put(sql, stmt);
+		SQLiteCursor cursor = new SQLitePreparedStatement(this, "EXPLAIN QUERY PLAN " + sql, true).query(args);
+		while (cursor.next()) {
+			int count = cursor.getColumnCount();
+			StringBuilder builder = new StringBuilder();
+			for (int a = 0; a < count; a++) {
+			    builder.append(cursor.stringValue(a)).append(", ");
+            }
+            FileLog.d("EXPLAIN QUERY PLAN " + builder.toString());
 		}
-
-		return stmt.query(args);
+		cursor.dispose();
 	}
 
 	public SQLiteCursor queryFinalized(String sql, Object... args) throws SQLiteException {
@@ -83,13 +73,12 @@ public class SQLiteDatabase {
 	public void close() {
 		if (isOpen) {
 			try {
-				for (SQLitePreparedStatement stmt : preparedMap.values()) {
-					stmt.finalizeQuery();
-				}
                 commitTransaction();
 				closedb(sqliteHandle);
 			} catch (SQLiteException e) {
-                FileLog.e("tmessages", e.getMessage(), e);
+				if (BuildVars.LOGS_ENABLED) {
+					FileLog.e(e.getMessage(), e);
+				}
 			}
 			isOpen = false;
 		}
@@ -106,7 +95,6 @@ public class SQLiteDatabase {
 		close();
 	}
 
-    private StackTraceElement[] temp;
     public void beginTransaction() throws SQLiteException {
         if (inTransaction) {
             throw new SQLiteException("database already in transaction");
@@ -123,8 +111,8 @@ public class SQLiteDatabase {
         commitTransaction(sqliteHandle);
     }
 
-	native int opendb(String fileName, String tempDir) throws SQLiteException;
-	native void closedb(int sqliteHandle) throws SQLiteException;
-    native void beginTransaction(int sqliteHandle);
-    native void commitTransaction(int sqliteHandle);
+	native long opendb(String fileName, String tempDir) throws SQLiteException;
+	native void closedb(long sqliteHandle) throws SQLiteException;
+    native void beginTransaction(long sqliteHandle);
+    native void commitTransaction(long sqliteHandle);
 }
